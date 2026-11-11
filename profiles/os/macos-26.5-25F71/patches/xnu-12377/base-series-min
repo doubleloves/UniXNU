@@ -52,4 +52,3 @@
 ../../../../../patches/xnu-12377/native-4k-block-split.patch
 ../../../../../patches/xnu-12377/native-modload-lock-order.patch
 ../../../../../patches/xnu-12377/native-union-readdir-eof.patch
-../../../../../patches/xnu-12377/linux-ptrauth-null-auth.patch
