@@ -13,7 +13,6 @@ arch:../../../patches/xnu-12377/darwin26-shared-region.patch
 ../xnu-12377/macos-rw-held-report.patch
 ../xnu-12377/macos-end-rename-swap.patch
 ../xnu-12377/macos-service-port-derive-check.patch
-../xnu-12377/macos-owner-root-authenticated-open.patch
 ../xnu-12377/window-memory-excluded-ranges.patch
 ../xnu-12377/xnuconfig-macos-memorystatus-policy.patch
 ../xnu-12377/xnuconfig-work-interval-counters.patch
