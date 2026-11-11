@@ -1,0 +1,90 @@
+From: macos-depac M1
+Subject: [PATCH] arm64: emulate LDRAA/LDRAB in the EL0 undefined-instruction path
+
+CPUs without FEAT_PAuth (e.g. Cortex-A77 / SM8250) take an undefined-instruction
+exception on arm64e LDRAA/LDRAB.  The offline de-PAC pass rewrites most PAC
+instructions to plain forms, but a few thousand LDRAA/LDRAB cannot be replaced by
+a single plain load; emulate them here for EL0 only.
+
+Signed-off-by: macos-depac
+
+--- a/osfmk/arm64/sleh.c
++++ b/osfmk/arm64/sleh.c
+@@ -1181,6 +1181,60 @@
+  * Uncategorized exceptions are a catch-all for general execution errors.
+  * ARM64_TODO: For now, we assume this is for undefined instruction exceptions.
+  */
++/*
++ * LDRAA/LDRAB (arm64e pointer-authenticated loads) on a CPU without
++ * FEAT_PAuth trap as undefined instructions.  The offline de-PAC pass leaves
++ * the ones that no single plain load can express; emulate them here.
++ *
++ * Encoding: bits 31:24 = 0xF8, bit 23 = M (0=LDRAA/key A, 1=LDRAB/key B),
++ * bit 22 = S, bits 20:12 = imm9, bit 11 = W (pre-index writeback),
++ * bits 9:5 = Rn (31 = SP), bits 4:0 = Rt.
++ *   offset = SignExtend10(S:imm9) * 8      (range -4096..4088)
++ *
++ * Returns TRUE if the instruction was emulated; the caller must then return
++ * so that the updated saved-state PC takes effect (the exception frame is
++ * popped by POP_FRAME_WITHOUT_LR in locore.s).
++ */
++static boolean_t
++handle_user_ldra_emulation(arm_saved_state_t *state, uint32_t instr)
++{
++	uint64_t base, addr, val;
++	uint32_t imm;
++	int n, t;
++
++	if ((instr & 0xFFA00400u) != 0xF8200400u &&
++	    (instr & 0xFFA00400u) != 0xF8A00400u) {
++		return FALSE;
++	}
++
++	n = (int)((instr >> 5) & 0x1fu);
++	t = (int)(instr & 0x1fu);
++	imm = (((instr >> 22) & 1u) << 9) | ((instr >> 12) & 0x1ffu);
++	if (imm & 0x200u) {
++		imm -= 0x400u;
++	}
++
++	base = (n == 31) ? (uint64_t)get_saved_state_sp(state)
++	                 : (uint64_t)get_saved_state_reg(state, n);
++	addr = base + (uint64_t)(int64_t)((int32_t)imm * 8);
++
++	if (COPYIN(addr, (char *)&val, sizeof(val)) != 0) {
++		/* Let the normal path report EXC_BAD_INSTRUCTION. */
++		return FALSE;
++	}
++
++	set_saved_state_reg(state, t, (register_t)val);
++	if (instr & (1u << 11)) {       /* W: pre-index writeback */
++		if (n == 31) {
++			set_saved_state_sp(state, (register_t)addr);
++		} else {
++			set_saved_state_reg(state, n, (register_t)addr);
++		}
++	}
++	set_saved_state_pc(state, get_saved_state_pc(state) + 4);
++	return TRUE;
++}
++
+ static void
+ handle_uncategorized(arm_saved_state_t *state)
+ {
+@@ -1190,6 +1244,16 @@
+ 	uint32_t                   instr     = 0;
+ 
+ 	COPYIN(get_saved_state_pc(state), (char *)&instr, sizeof(instr));
++	/*
++	 * Emulate LDRAA/LDRAB left by the offline de-PAC pass (no FEAT_PAuth).
++	 * Must stay EL0-only: kernel-mode undefined instructions must keep the
++	 * panic/debugger path below.
++	 */
++	if (PSR64_IS_USER(get_saved_state_cpsr(state)) &&
++	    handle_user_ldra_emulation(state, instr)) {
++		return;
++	}
++
+ 
+ #if CONFIG_DTRACE
+ 
